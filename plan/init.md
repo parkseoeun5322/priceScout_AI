@@ -30,7 +30,7 @@ src_shopping/
 
 ## 구현 단계 (레이어 1 / 단계 1 부터 점진적)
 
-### 레이어 1 · 단계 1 — 엑셀 읽기 ✅ (코드 작성 완료, 검증 대기)
+### 레이어 1 · 단계 1 — 엑셀 읽기 ✅ (검증 완료)
 - `config.py`: 입력 경로를 `(년도, 월, 학교명)` 파라미터로 조합. 출력/체크포인트 경로 규칙 동일하게 파생.
 - `orchestrator.py`의 `read_products(path) -> list[dict]`:
   - pandas로 시트 읽기 (헤더 1행)
@@ -40,15 +40,24 @@ src_shopping/
   - 건수 검증(기대 107) 및 수량 이상치 로깅
 - 단독 실행으로 파싱된 107건을 콘솔 출력해 검증.
 
-### 레이어 1 · 단계 2 — 큐 생성
+### 레이어 1 · 단계 2 — 큐 생성 ✅ (검증 완료)
 - `chunk(products, size=10) -> list[list[dict]]` (107 → 11배치: 10×10 + 7)
+- 검증: 빈 입력/균등·비균등 분할/size=1/size≥전체/size≤0 예외/**원소 보존**(실데이터 107건 flatten==원본)
 
-### 레이어 1 · 단계 3 — 배치 분배
-- `asyncio.gather`로 워커 호출하되 **동시 브라우저 수를 Semaphore로 제한(기본 2~3)** + 요청 간 랜덤 지연.
-  네이버 봇 차단 회피 목적 (배치=10 전부 동시 실행 금지).
+### 레이어 1 · 단계 3 — 배치 분배 ✅ (검증 완료)
+- `distribute(products, worker, ...)`: 배치 단위 순차 + 배치 내부 `asyncio.gather` 동시 처리.
+  **동시 브라우저 수를 Semaphore로 제한**(`MAX_CONCURRENT_BROWSERS`, 기본 2) + 요청 간 랜덤 지연
+  (`REQUEST_DELAY_MIN/MAX`)으로 네이버 봇 차단 회피.
+- 워커는 **주입(injection)** 방식(`Worker` 타입) → 레이어 2 없이 stub으로 검증 가능.
+- 개별 워커 예외는 `status='error'`로 격리해 전체 중단 방지. 결과는 원본 순서 보존.
+- 검증: 동시성 제한(peak≤max)/순서 보존/예외 격리/랜덤 지연/**실데이터 107건 11배치 통과**.
 
-### 레이어 1 · 단계 4 — 체크포인트
+### 레이어 1 · 단계 4 — 체크포인트 ✅ (검증 완료)
 - `checkpoint/{학교명}.json`에 완료된 `row`별 결과 누적 저장. 재시작 시 완료된 row는 건너뜀.
+- `load_checkpoint`/`save_checkpoint`(임시파일→`os.replace` **원자적 교체**)로 입출력. `distribute`가 배치마다 저장.
+- **성공(ok) row만 영속화** → 실패(error) row는 재시작 시 자동 재시도 (네이버 일시 차단 대비).
+- 손상된 JSON은 경고 후 처음부터 시작.
+- 검증: 최초실행/완료분 건너뜀/부분완료 재시작/실패 재시도/손상파일 복구 5항목 통과.
 
 ### 레이어 2 — search_worker.py
 1. **Playwright**: `https://search.shopping.naver.com/home` 검색 → 정렬 '네이버 랭킹순' →
@@ -65,9 +74,14 @@ src_shopping/
 - `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx` 로 저장 (디렉토리 없으면 생성).
 
 ## 사전 준비 / 의존성
-- `requirements.txt`: `pandas openpyxl playwright anthropic`
-- 설치: `pip install -r requirements.txt` 후 `playwright install chromium`
+- **가상환경**: 프로젝트 루트에 `.venv/` 생성 완료 (Python 3.14.5). venv 자동 생성 `.gitignore`로 git 추적 제외됨.
+  - 실행: `.\.venv\Scripts\python.exe ...` (또는 `.\.venv\Scripts\Activate.ps1` 후 `python ...`)
+- **설치 완료(레이어 1)**: `pandas`(3.0.3), `openpyxl`(3.1.5) ✅
+- **미설치(레이어 2)**: `playwright`, `anthropic` — 착수 시 설치 + `playwright install chromium` 필요.
+  - ⚠️ Python 3.14는 최신이라 `playwright`/`anthropic` 휠 호환성 확인 필요. 막히면 3.12로 venv 재생성 고려.
 - API 키: 환경변수 `ANTHROPIC_API_KEY` 사용 (코드에 하드코딩 금지)
+- `requirements.txt`: 아직 미생성 (레이어 2 착수 시 `pandas openpyxl playwright anthropic`로 작성 예정)
+- **콘솔 한글 깨짐 방지**: `config.setup_utf8_output()` 추가 → 각 진입점 `main()`에서 호출 (PowerShell cp949 대응).
 
 ## 검증 방법
 - 단계 1: `python orchestrator.py --year 2026 --month 06 --school 방림초등학교 --limit 5`
@@ -79,7 +93,12 @@ src_shopping/
 - HTML 구조 변경 → 셀렉터를 `config.py`로 분리.
 - 비용 → Haiku 우선, 필요 시 Sonnet. HTML은 결과 영역만 잘라 토큰 절감.
 
-## 현재 진행 상태
-- ✅ 레이어 1 · 단계 1 코드 작성 완료 (`config.py`, `orchestrator.py`)
-- ⏳ 검증 대기: `pandas`, `openpyxl` 설치 필요 (승인 후 진행)
-- ⬜ 단계 2~4 및 레이어 2 미착수
+## 현재 진행 상태 (2026-06-15 업데이트)
+- ✅ `.venv` 생성 + `pandas`/`openpyxl` 설치
+- ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
+  - 단계 1 엑셀 읽기 / 단계 2 큐 생성 / 단계 3 배치 분배 / 단계 4 체크포인트
+  - 각 함수에 단계 구역(banner) 주석 부착, `config.py` 설정도 단계 표기
+  - `config.setup_utf8_output()`로 콘솔 한글 출력 처리
+- ⬜ **다음**: 레이어 2 `search_worker.py` (Playwright + Claude API)
+  - 선행: `playwright`/`anthropic` 설치(3.14 호환성 확인), `ANTHROPIC_API_KEY` 설정
+- ⬜ 결과 저장(openpyxl) 및 오케스트레이터↔워커 통합(end-to-end) 미착수

@@ -46,6 +46,14 @@
    - JSON 형태로 반환
 3. **엑셀 저장**: openpyxl로 결과를 행 단위로 원본/결과 엑셀에 기록
 
-## 현재 상태
-- 코드/라이브러리 설치 전 초기화 단계
-- 아직 미설치: `pandas`, `playwright`, `anthropic`, `openpyxl`
+## 현재 상태 (2026-06-15)
+- 환경: 프로젝트 루트 `.venv/` (Python 3.14.5). 실행은 `.\.venv\Scripts\python.exe ...`
+- 설치 완료: `pandas`, `openpyxl` / 미설치: `playwright`, `anthropic` (레이어 2 착수 시)
+- **레이어 1(오케스트레이터) 단계 1~4 구현·검증 완료** (`config.py`, `orchestrator.py`)
+  - 단계 1 엑셀 읽기(`read_products`) · 단계 2 큐 생성(`chunk`)
+  - 단계 3 배치 분배(`distribute`: Semaphore 동시성 제한 + 랜덤 지연 + 예외 격리, 워커 주입형)
+  - 단계 4 체크포인트(`load/save_checkpoint`: 원자적 저장, 성공 row만 영속화 → 실패 재시도)
+  - 콘솔 한글 출력: `config.setup_utf8_output()`
+- 다음: 레이어 2 `search_worker.py` (Playwright + Claude API). `Worker` 타입으로 주입.
+  - 선행: `playwright`/`anthropic` 설치(3.14 호환성 확인), `ANTHROPIC_API_KEY` 환경변수
+- 상세 진행상황은 `plan/init.md` 참조.

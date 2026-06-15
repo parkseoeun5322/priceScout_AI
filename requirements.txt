@@ -1,0 +1,9 @@
+# 레이어 1 (오케스트레이터) — 설치 완료
+pandas==3.0.3
+openpyxl==3.1.5
+
+# 레이어 2 (워커: Playwright + Claude API) — 착수 시 주석 해제 후 설치
+# 설치 후 `python -m playwright install chromium` 도 실행해야 함.
+# ⚠️ Python 3.14에서 휠 호환성 문제가 나면 Python 3.12 venv로 재생성 권장.
+# playwright
+# anthropic
