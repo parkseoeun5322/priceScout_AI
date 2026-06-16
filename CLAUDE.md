@@ -2,12 +2,14 @@
 
 ## 목적
 `origin/교재교구 및 놀이활동 물품 구입 목록.xlsx`의 각 상품에 대해, 기존에 적힌 예상 단가나 G열의 구입처 링크에
-의존하지 않고, **네이버 가격비교**(https://search.shopping.naver.com/home)에서 직접 검색하여
-실제 최저가(+배송비)를 찾아내는 자동화 프로그램을 구축한다.
+의존하지 않고, **네이버에서 직접 검색**하여 실제 최저가를 찾아내는 자동화 프로그램을 구축한다.
 
 기존에 Claude WEB을 이용해 수동으로 검색을 시도했으나(`result/교재교구_물품_최저가목록_2026.xlsx`),
-상품 수가 많아 일일이 검색하는 데 한계가 있어 실패했다. 이를 Playwright + Claude API 기반의
-반자동 파이프라인으로 대체한다.
+상품 수가 많아 일일이 검색하는 데 한계가 있어 실패했다.
+
+> **검색 경로 (2026-06-16 변경)**: 당초 Playwright(브라우저 조종)로 네이버 쇼핑 HTML을 긁으려 했으나
+> **봇 차단(418/로그인 강제/CAPTCHA)** 으로 폐기. → **네이버 검색 오픈 API**
+> (`https://openapi.naver.com/v1/search/shop.json`) 기반으로 전환. 자세한 정찰 기록은 `plan/init.md` 참조.
 
 ## 입력 / 출력 파일
 - 입력: `origin/{년도}/{월}월/{학교명}_교재교구 및 놀이활동 물품 구입 목록.xlsx`
@@ -17,43 +19,49 @@
   - G열: (기존) 구입처 링크 — **참고하지 않음**
 - 출력: `result/{년도}/{월}월/{학교명}_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
   - 예: `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
-  - 최저가 + 배송비 + 합계 + 상품 URL 등을 행 단위로 기록
+  - 최저가 + 합계 + 상품 URL 등을 행 단위로 기록 (배송비는 빈칸+"확인필요")
   - 입력 파일과 동일한 `{년도}/{월}월` 디렉토리 구조를 `result/` 하위에 그대로 생성
 
 ## 핵심 요구사항
 1. 검색어 = B열(상품명) + ' ' + C열(규격)
-2. 네이버 가격비교에서 검색 후, 기본 정렬인 '네이버 랭킹순'을 **'낮은 가격순'**으로 변경
+2. 네이버 검색 오픈 API 호출 시 `sort=asc`(가격 오름차순 = **낮은 가격순**) 사용
 3. 우선순위: **동일 상품 정확도 > 낮은 가격순**
    - 단순히 정렬 후 첫 번째 상품을 그대로 채택하지 않음
-   - 검색어(상품명 토큰)가 상품명에 많이 포함되어 일치도가 높은 상품들 중에서,
-     가격순으로 가장 먼저 나오는 상품을 채택
-4. 배송비가 존재하면 가격에 배송비를 더한 금액을 최종 가격으로 기록
+   - 검색어(상품명 토큰)가 API 결과 `title`에 많이 포함되어 일치도가 높은 상품들 중에서,
+     가격순으로 가장 먼저 나오는 상품을 채택 (토큰 매칭은 순수 Python으로 시작)
+4. **배송비**: 오픈 API에 배송비 필드가 없어 **3안(칸 비움 + "확인필요" 표시)** 채택.
+   최종 단가 = `lprice`, 합계는 배송비 미포함(추후 보강 과제).
 
 ## 아키텍처
 
-### 레이어 1 — 오케스트레이터 (순수 Python, Claude/Playwright 미사용)
+### 레이어 1 — 오케스트레이터 (순수 Python)
 1. 엑셀 읽기 (pandas)
 2. 큐 생성: 엑셀 행을 10개 단위로 분할
-3. 배치 분배: `asyncio.gather`로 각 배치를 워커에 위임
+3. 배치 분배: `asyncio.gather`로 각 배치를 워커에 위임 (`Worker` 타입 주입)
 4. 체크포인트: 진행 상태를 JSON 파일로 저장 (중단 후 재시작 가능)
 
 ### 레이어 2 — 실행 워커 (`search_worker.py`)
-1. **Playwright**: Chrome을 조종하여 네이버 가격비교에서 검색어로 검색 → 정렬 변경 →
-   결과 HTML 획득 (`pip install playwright`)
-2. **Claude API** (`anthropic` 라이브러리, `pip install anthropic`): 워커가 직접 호출.
-   - HTML을 받아 파싱
-   - 위 우선순위 규칙에 따라 최저가 상품 + 가격 + 배송비 + URL 추출
-   - JSON 형태로 반환
-3. **엑셀 저장**: openpyxl로 결과를 행 단위로 원본/결과 엑셀에 기록
+1. **네이버 검색 오픈 API**(`httpx` 권장): `GET https://openapi.naver.com/v1/search/shop.json`
+   - 헤더: `X-Naver-Client-Id`, `X-Naver-Client-Secret` (환경변수 `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`)
+   - 파라미터: `query`(검색어), `display`, `sort=asc`(낮은 가격순)
+   - 응답 `items[]`: `title`(상품명, `<b>`태그·엔티티 정리), `link`(URL), `lprice`(최저가), `mallName` 등
+2. **동일상품 정확도 매칭** (순수 Python 토큰 비교): 검색어 토큰이 `title`에 많이 포함된 후보 중
+   `lprice` 최소 항목 채택. 후보 없으면 null + 사유. (품질 부족 시 Claude API 도입 검토)
+3. 결과 dict 반환 → 오케스트레이터(`distribute`)가 수집.
+4. **엑셀 저장**: openpyxl로 결과를 행 단위로 결과 엑셀에 기록 (배송비 칸은 "확인필요").
 
-## 현재 상태 (2026-06-15)
+> ⚠️ Playwright 접근은 네이버 봇 차단으로 폐기됨 (`probe_naver.py` 정찰 기록, `plan/init.md` 참조).
+
+## 현재 상태 (2026-06-16)
 - 환경: 프로젝트 루트 `.venv/` (Python 3.14.5). 실행은 `.\.venv\Scripts\python.exe ...`
-- 설치 완료: `pandas`, `openpyxl` / 미설치: `playwright`, `anthropic` (레이어 2 착수 시)
+- 설치 완료: `pandas`, `openpyxl` (+ `playwright`/`chromium`은 설치했으나 봇 차단으로 폐기, 제거 가능)
 - **레이어 1(오케스트레이터) 단계 1~4 구현·검증 완료** (`config.py`, `orchestrator.py`)
   - 단계 1 엑셀 읽기(`read_products`) · 단계 2 큐 생성(`chunk`)
   - 단계 3 배치 분배(`distribute`: Semaphore 동시성 제한 + 랜덤 지연 + 예외 격리, 워커 주입형)
   - 단계 4 체크포인트(`load/save_checkpoint`: 원자적 저장, 성공 row만 영속화 → 실패 재시도)
   - 콘솔 한글 출력: `config.setup_utf8_output()`
-- 다음: 레이어 2 `search_worker.py` (Playwright + Claude API). `Worker` 타입으로 주입.
-  - 선행: `playwright`/`anthropic` 설치(3.14 호환성 확인), `ANTHROPIC_API_KEY` 환경변수
+- **레이어 2 접근 전환**: Playwright 차단 확인(`probe_naver.py`) → **네이버 검색 오픈 API**로 결정.
+  배송비는 3안(빈칸+"확인필요") 확정.
+- 다음: API 키 발급 완료 후 레이어 2 `search_worker.py` 착수 (`httpx`로 오픈 API 호출 + 토큰 매칭, `Worker` 주입).
+  - 선행: `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET` 환경변수, `httpx` 설치. 정리: `probe_naver.py` 삭제.
 - 상세 진행상황은 `plan/init.md` 참조.

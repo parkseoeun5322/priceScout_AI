@@ -2,9 +2,13 @@
 
 ## 배경 (Context)
 `origin/2026/06월/방림초등학교_교재교구 및 놀이활동 물품 구입 목록.xlsx`의 107개 상품에 대해,
-기존 예상단가/구입처 링크에 의존하지 않고 **네이버 가격비교**에서 직접 검색하여 실제 최저가(+배송비)를
-자동으로 찾는다. 수동 검색이 물량 한계로 실패했기에
-`Playwright(브라우저 조종) → Claude API(HTML 파싱) → openpyxl(저장)` 파이프라인으로 대체한다.
+기존 예상단가/구입처 링크에 의존하지 않고 네이버에서 직접 검색하여 실제 최저가를
+자동으로 찾는다. 수동 검색이 물량 한계로 실패했다.
+
+> **⚠️ 접근 방식 변경 (2026-06-16)**: 당초 `Playwright(브라우저 조종) → Claude API(HTML 파싱)`
+> 파이프라인을 설계했으나, 정찰 결과 **네이버 쇼핑이 자동화 브라우저를 강력히 차단**(아래
+> "레이어 2" 참조)해 사실상 불가능. → **네이버 검색 오픈 API**(`/v1/search/shop`) 기반으로 전환.
+> 봇 차단·CAPTCHA 없이 JSON으로 최저가·상품명·URL을 받는다.
 
 ### 엑셀 실측 구조 (직접 분석 완료)
 - 시트: `sheet1`, 헤더 1행, 상품 데이터 **2~108행 (107개, 연속)**, 109행 이후는 빈 스타일 행
@@ -12,17 +16,21 @@
 - 주의: **C(규격)는 자주 비어 있음** → 비면 상품명만으로 검색 / C에 **앞 공백**(`' 50x70cm'`) 존재 → strip 필요
 
 ### 확정된 결정사항
-- HTML 파싱 모델: **`claude-haiku-4-5`** 로 시작, 매칭 품질 부족 시 `claude-sonnet-4-6`로 상향
+- **검색 경로**: 네이버 검색 오픈 API `GET https://openapi.naver.com/v1/search/shop.json`
+  (Playwright 미사용 — 봇 차단으로 폐기). 인증은 헤더 `X-Naver-Client-Id`/`X-Naver-Client-Secret`.
+- **정렬**: `sort=asc` (가격 오름차순 = 낮은 가격순). 동일상품 정확도는 검색어 토큰 매칭으로 직접 구현.
+- **배송비**: **3안 — 배송비 칸은 비워두고 "확인필요"로 표시** (오픈 API에 배송비 필드 없음).
+  → 따라서 합계도 배송비 미포함(추후 보강). 최종 단가 = `lprice`.
+- 동일상품 매칭: 우선 **토큰 기반(순수 Python)** 으로 시작. 품질 부족 시 Claude API 도입 검토.
 - 출력: **새 결과 시트로 깔끔하게** (원본 컬럼 나열 X, 결과 전용 표)
-- 합계: **(최저가 + 배송비) × 수량(D열)**
 
 ## 프로젝트 레이아웃 (생성 예정)
 ```
 src_shopping/
   orchestrator.py        # 레이어 1: 엑셀 읽기 → 큐 → 배치 → 체크포인트
-  search_worker.py       # 레이어 2: Playwright → Claude API → 결과 dict 반환
-  config.py              # 경로/모델/동시성/네이버 셀렉터 등 설정
-  requirements.txt       # pandas, openpyxl, playwright, anthropic
+  search_worker.py       # 레이어 2: 네이버 검색 오픈 API 호출 → 결과 dict 반환
+  config.py              # 경로/동시성/API 엔드포인트 등 설정
+  requirements.txt       # pandas, openpyxl, httpx (playwright/anthropic 미사용)
   checkpoint/            # 진행상태 JSON (재시작용)
   origin/2026/06월/...xlsx
   result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx
@@ -59,28 +67,45 @@ src_shopping/
 - 손상된 JSON은 경고 후 처음부터 시작.
 - 검증: 최초실행/완료분 건너뜀/부분완료 재시작/실패 재시도/손상파일 복구 5항목 통과.
 
-### 레이어 2 — search_worker.py
-1. **Playwright**: `https://search.shopping.naver.com/home` 검색 → 정렬 '네이버 랭킹순' →
-   **'낮은 가격순'** 변경 → 동적 로딩 대기 후 결과 영역 HTML 추출.
-   (셀렉터는 `config.py`로 분리.)
-2. **Claude API**(`anthropic`, `claude-haiku-4-5`): HTML을 받아 규칙 적용
-   - **동일 상품 정확도 우선** → 검색어 토큰이 상품명에 많이 포함된 후보들 중에서
-   - **낮은 가격순 첫 번째** 채택 (단순 1번째 X)
-   - 추출: `{최저가, 배송비, 상품명, 상품URL}` JSON (없으면 null + 사유)
-3. 결과 dict 반환 → 오케스트레이터가 수집.
+### 레이어 2 — search_worker.py  (⬜ 미착수 / API 키 발급 대기)
+
+#### 폐기된 접근: Playwright (정찰 결과 차단 확인, 2026-06-16)
+`playwright`+`chromium` 설치 후 `probe_naver.py`로 실제 네이버 쇼핑 접근을 시험한 결과 **전부 차단**:
+| 시도 | 결과 |
+|---|---|
+| Headless Chromium 딥링크(`search/all?query=`) | **HTTP 418** — "접속이 일시적으로 제한" |
+| Headed Chromium 홈→검색 | **로그인 페이지로 강제 리다이렉트** |
+| 실제 Chrome(`channel=chrome`) 딥링크 | **HTTP 405 + 이미지 CAPTCHA**(사람이 풀어야 함) |
+stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdriver` 제거, ko-KR/UA)을
+적용해도 동일. → Playwright 경로 폐기. (`probe_naver.py`는 정찰용 임시 파일, 정리 예정.)
+
+#### 채택된 접근: 네이버 검색 오픈 API
+1. **API 호출**(`httpx` 권장, async): `GET https://openapi.naver.com/v1/search/shop.json`
+   - 헤더: `X-Naver-Client-Id`, `X-Naver-Client-Secret` (환경변수로 주입)
+   - 파라미터: `query`(=search_query), `display`(예: 30~100), `sort=asc`(낮은 가격순)
+   - 응답 `items[]`: `title`(상품명, `<b>`태그·HTML엔티티 정리 필요), `link`(상품 URL),
+     `lprice`(최저가), `mallName`, `productId`, `brand`, `maker`, `category1~4`
+2. **동일상품 정확도 매칭**(순수 Python 토큰 비교):
+   - 검색어(상품명+규격) 토큰이 `title`에 많이 포함된 후보를 선별,
+   - 그 중 `lprice` 최소(이미 `sort=asc`) 항목 채택. 후보 없으면 null + 사유.
+3. 결과 dict 반환 → 오케스트레이터(`distribute`)가 `Worker` 타입으로 주입받아 수집.
+   - 반환 예: `{lprice, title(정리본), link, mallName, status}` (배송비 미포함 → 빈칸/"확인필요")
 
 ### 결과 저장 (openpyxl)
-- 새 워크북/시트 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비 · 합계((최저가+배송비)×수량) · 매칭상품명 · 상품URL · 상태`
+- 새 워크북/시트 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비(="확인필요") · 합계 · 매칭상품명 · 상품URL · 쇼핑몰 · 상태`
+  - 배송비 칸은 비워두고 "확인필요" 표기, 합계는 배송비 미포함(추후 보강).
 - `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx` 로 저장 (디렉토리 없으면 생성).
 
 ## 사전 준비 / 의존성
 - **가상환경**: 프로젝트 루트에 `.venv/` 생성 완료 (Python 3.14.5). venv 자동 생성 `.gitignore`로 git 추적 제외됨.
   - 실행: `.\.venv\Scripts\python.exe ...` (또는 `.\.venv\Scripts\Activate.ps1` 후 `python ...`)
 - **설치 완료(레이어 1)**: `pandas`(3.0.3), `openpyxl`(3.1.5) ✅
-- **미설치(레이어 2)**: `playwright`, `anthropic` — 착수 시 설치 + `playwright install chromium` 필요.
-  - ⚠️ Python 3.14는 최신이라 `playwright`/`anthropic` 휠 호환성 확인 필요. 막히면 3.12로 venv 재생성 고려.
-- API 키: 환경변수 `ANTHROPIC_API_KEY` 사용 (코드에 하드코딩 금지)
-- `requirements.txt`: 아직 미생성 (레이어 2 착수 시 `pandas openpyxl playwright anthropic`로 작성 예정)
+- **레이어 2(오픈 API)**: `httpx` 설치 예정. (Python 3.14에서 `playwright` 1.60·chromium 설치는
+  성공했으나 봇 차단으로 **폐기** → 제거 가능. `anthropic`은 토큰 매칭으로 시작하므로 당장 불필요.)
+- **API 키**: 네이버 개발자센터 앱 등록(사용 API=**검색**, 환경=WEB, 서비스URL=`http://localhost`)으로
+  발급받은 값을 환경변수로 주입 (코드 하드코딩 금지):
+  - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`
+- `requirements.txt`: 레이어 1 기준 `pandas`/`openpyxl` 등록됨. 레이어 2 착수 시 `httpx` 추가 예정.
 - **콘솔 한글 깨짐 방지**: `config.setup_utf8_output()` 추가 → 각 진입점 `main()`에서 호출 (PowerShell cp949 대응).
 
 ## 검증 방법
@@ -89,16 +114,19 @@ src_shopping/
 - 전체: 소수(예: 3건)만 워커까지 돌려 네이버 검색→파싱→엑셀 1행 저장 end-to-end 확인 후 전량 실행.
 
 ## 리스크 / 주의
-- 네이버 봇 차단/캡차 → 저동시성 + 지연 + 재시도 + 체크포인트로 완화.
-- HTML 구조 변경 → 셀렉터를 `config.py`로 분리.
-- 비용 → Haiku 우선, 필요 시 Sonnet. HTML은 결과 영역만 잘라 토큰 절감.
+- **배송비 누락**: 오픈 API에 배송비 필드 없음 → 3안(빈칸+"확인필요"). 정확 합계는 추후 보강 과제.
+- **API 한도**: 검색 오픈 API 기본 하루 25,000건 → 107건은 여유. 그래도 저동시성·재시도·체크포인트 유지.
+- **매칭 정확도**: 토큰 매칭만으로 동일상품 식별이 약할 수 있음 → 품질 부족 시 Claude API 도입 검토.
+- API는 봇 차단이 없으므로 `MAX_CONCURRENT_BROWSERS`/지연 의미는 약해지나, 예의상·한도상 유지.
 
-## 현재 진행 상태 (2026-06-15 업데이트)
-- ✅ `.venv` 생성 + `pandas`/`openpyxl` 설치
+## 현재 진행 상태 (2026-06-16 업데이트)
+- ✅ `.venv` 생성 + `pandas`/`openpyxl` 설치, `requirements.txt`/`README.md`/`.gitignore` 작성
 - ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
   - 단계 1 엑셀 읽기 / 단계 2 큐 생성 / 단계 3 배치 분배 / 단계 4 체크포인트
-  - 각 함수에 단계 구역(banner) 주석 부착, `config.py` 설정도 단계 표기
-  - `config.setup_utf8_output()`로 콘솔 한글 출력 처리
-- ⬜ **다음**: 레이어 2 `search_worker.py` (Playwright + Claude API)
-  - 선행: `playwright`/`anthropic` 설치(3.14 호환성 확인), `ANTHROPIC_API_KEY` 설정
+  - 각 함수에 단계 구역(banner) 주석, `config.py` 설정도 단계 표기, `setup_utf8_output()` 한글 출력
+- ✅ **레이어 2 접근 방식 정찰·전환 결정**: Playwright 차단 확인(`probe_naver.py`) → **네이버 검색 오픈 API**로 전환
+- ✅ **배송비 처리 = 3안(빈칸+"확인필요")** 확정
+- ⏳ **API 키 발급 중**: 네이버 개발자센터 앱 등록(사용 API=검색, 환경=WEB, URL=`http://localhost`)
+- ⬜ **다음**: 레이어 2 `search_worker.py` — 오픈 API 호출 + 토큰 매칭 (`httpx` 설치, 키 환경변수 설정 후 착수)
+  - 정리 과제: `probe_naver.py` 삭제, `playwright`/`chromium` 제거 가능
 - ⬜ 결과 저장(openpyxl) 및 오케스트레이터↔워커 통합(end-to-end) 미착수
