@@ -1,4 +1,4 @@
-.idea/
+.idea
 
 # 가상환경 (각 PC에서 새로 생성 — requirements.txt로 재현)
 .venv/
@@ -12,6 +12,9 @@ __pycache__/
 checkpoint/
 *.tmp
 
+# 환경변수(네이버 API 키 등) — 비밀값이므로 git 추적 제외 (env.example만 공유)
+.env
+
 # IDE
 .idea/
 .vscode/
@@ -19,3 +22,6 @@ checkpoint/
 # OS
 .DS_Store
 Thumbs.db
+
+# 엑셀 임시 잠금 파일 (파일을 열어두면 생성됨)
+~$*

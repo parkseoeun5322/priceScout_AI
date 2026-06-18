@@ -2,8 +2,6 @@
 pandas==3.0.3
 openpyxl==3.1.5
 
-# 레이어 2 (워커: Playwright + Claude API) — 착수 시 주석 해제 후 설치
-# 설치 후 `python -m playwright install chromium` 도 실행해야 함.
-# ⚠️ Python 3.14에서 휠 호환성 문제가 나면 Python 3.12 venv로 재생성 권장.
-# playwright
-# anthropic
+# 레이어 2 (워커: 네이버 검색 오픈 API)
+httpx==0.28.1            # 오픈 API 비동기 호출
+python-dotenv==1.2.2     # .env 파일에서 NAVER_CLIENT_ID/SECRET 환경변수 로드

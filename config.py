@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +27,17 @@ def setup_utf8_output() -> None:
 # ---------------------------------------------------------------------------
 # 이 파일이 위치한 디렉토리를 프로젝트 루트로 간주한다.
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+# 프로젝트 루트의 .env 파일을 환경변수로 로드한다(있을 때만).
+# → NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 을 매 세션 $env: 로 넣지 않아도 됨.
+#   python-dotenv 미설치 환경에서도 동작하도록 import 실패는 무시(직접 export한 환경변수만 사용).
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 ORIGIN_DIR = PROJECT_ROOT / "origin"
 RESULT_DIR = PROJECT_ROOT / "result"
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoint"
@@ -82,13 +94,49 @@ REQUEST_DELAY_MIN = 1.0
 REQUEST_DELAY_MAX = 3.0
 
 # ---------------------------------------------------------------------------
-# Claude API (레이어 2에서 사용)
+# 네이버 검색 오픈 API (레이어 2에서 사용)
 # ---------------------------------------------------------------------------
-# Haiku로 시작, 매칭 품질 부족 시 "claude-sonnet-4-6"로 상향
-PARSE_MODEL = "claude-haiku-4-5"
-# API 키는 환경변수 ANTHROPIC_API_KEY 로 주입 (코드에 하드코딩 금지)
+# 검색(쇼핑) 오픈 API 엔드포인트. GET 요청, JSON 응답.
+NAVER_SHOP_API_URL = "https://openapi.naver.com/v1/search/shop.json"
+# 한 번에 받을 결과 수(최대 100). 토큰 매칭 후보를 넉넉히 확보하기 위해 30으로 시작.
+NAVER_DISPLAY = 30
+# 정렬: asc = 가격 오름차순(낮은 가격순). 동일상품 정확도는 토큰 매칭으로 별도 판정.
+NAVER_SORT = "asc"
 
-# ---------------------------------------------------------------------------
-# 네이버 가격비교 (레이어 2에서 사용)
-# ---------------------------------------------------------------------------
-NAVER_SHOPPING_HOME = "https://search.shopping.naver.com/home"
+# 인증 키를 주입받는 환경변수 이름 (코드에 키 하드코딩 금지)
+ENV_NAVER_CLIENT_ID = "NAVER_CLIENT_ID"
+ENV_NAVER_CLIENT_SECRET = "NAVER_CLIENT_SECRET"
+
+
+def naver_credentials() -> tuple[str, str]:
+    """환경변수에서 네이버 오픈 API 키(Client ID/Secret)를 읽어 반환한다.
+
+    `.env` 파일(있으면 import 시 자동 로드) 또는 셸에서 export한 환경변수에서 읽는다.
+    하나라도 비어 있으면 어떤 변수가 누락됐는지 알려주는 에러를 던진다.
+    """
+    client_id = os.environ.get(ENV_NAVER_CLIENT_ID, "").strip()
+    client_secret = os.environ.get(ENV_NAVER_CLIENT_SECRET, "").strip()
+    missing = [
+        name
+        for name, value in (
+            (ENV_NAVER_CLIENT_ID, client_id),
+            (ENV_NAVER_CLIENT_SECRET, client_secret),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            f"네이버 오픈 API 키 환경변수가 설정되지 않았습니다: {', '.join(missing)}\n"
+            f"  프로젝트 루트의 .env 파일(.env.example 참고)에 넣거나, "
+            f"PowerShell에서 $env:{ENV_NAVER_CLIENT_ID}=... 로 설정하세요."
+        )
+    return client_id, client_secret
+
+
+def naver_api_headers() -> dict[str, str]:
+    """네이버 오픈 API 호출용 인증 헤더를 만든다."""
+    client_id, client_secret = naver_credentials()
+    return {
+        "X-Naver-Client-Id": client_id,
+        "X-Naver-Client-Secret": client_secret,
+    }

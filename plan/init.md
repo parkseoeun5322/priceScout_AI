@@ -100,12 +100,17 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - **가상환경**: 프로젝트 루트에 `.venv/` 생성 완료 (Python 3.14.5). venv 자동 생성 `.gitignore`로 git 추적 제외됨.
   - 실행: `.\.venv\Scripts\python.exe ...` (또는 `.\.venv\Scripts\Activate.ps1` 후 `python ...`)
 - **설치 완료(레이어 1)**: `pandas`(3.0.3), `openpyxl`(3.1.5) ✅
-- **레이어 2(오픈 API)**: `httpx` 설치 예정. (Python 3.14에서 `playwright` 1.60·chromium 설치는
-  성공했으나 봇 차단으로 **폐기** → 제거 가능. `anthropic`은 토큰 매칭으로 시작하므로 당장 불필요.)
-- **API 키**: 네이버 개발자센터 앱 등록(사용 API=**검색**, 환경=WEB, 서비스URL=`http://localhost`)으로
-  발급받은 값을 환경변수로 주입 (코드 하드코딩 금지):
-  - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`
-- `requirements.txt`: 레이어 1 기준 `pandas`/`openpyxl` 등록됨. 레이어 2 착수 시 `httpx` 추가 예정.
+- **설치 완료(레이어 2)**: `httpx`(0.28.1), `python-dotenv`(1.2.2) ✅ (`playwright`는 봇 차단으로 폐기.
+  `anthropic`은 토큰 매칭으로 시작하므로 당장 불필요.)
+- **API 키 주입 환경 구성 완료** ✅: 네이버 개발자센터 앱 등록(사용 API=**검색**, 환경=WEB,
+  서비스URL=`http://localhost`)으로 발급받은 값을 환경변수로 주입 (코드 하드코딩 금지):
+  - 환경변수: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`
+  - `config.py`: 프로젝트 루트 `.env` 자동 로드(python-dotenv) → `naver_credentials()`(누락 시
+    어떤 변수가 빠졌는지 에러) / `naver_api_headers()`(`X-Naver-Client-Id`/`X-Naver-Client-Secret` 헤더).
+    상수 `NAVER_SHOP_API_URL`·`NAVER_DISPLAY`(30)·`NAVER_SORT`("asc") 추가.
+  - `.env`는 `.gitignore`로 추적 제외, 템플릿 `env.example` 제공(`Copy-Item env.example .env`).
+  - **사용자가 실제 키로 `.env` 생성 완료** ✅
+- `requirements.txt`: `pandas`/`openpyxl`/`httpx`/`python-dotenv` 등록 완료.
 - **콘솔 한글 깨짐 방지**: `config.setup_utf8_output()` 추가 → 각 진입점 `main()`에서 호출 (PowerShell cp949 대응).
 
 ## 검증 방법
@@ -119,14 +124,16 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - **매칭 정확도**: 토큰 매칭만으로 동일상품 식별이 약할 수 있음 → 품질 부족 시 Claude API 도입 검토.
 - API는 봇 차단이 없으므로 `MAX_CONCURRENT_BROWSERS`/지연 의미는 약해지나, 예의상·한도상 유지.
 
-## 현재 진행 상태 (2026-06-16 업데이트)
+## 현재 진행 상태 (2026-06-18 업데이트)
 - ✅ `.venv` 생성 + `pandas`/`openpyxl` 설치, `requirements.txt`/`README.md`/`.gitignore` 작성
 - ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
   - 단계 1 엑셀 읽기 / 단계 2 큐 생성 / 단계 3 배치 분배 / 단계 4 체크포인트
   - 각 함수에 단계 구역(banner) 주석, `config.py` 설정도 단계 표기, `setup_utf8_output()` 한글 출력
 - ✅ **레이어 2 접근 방식 정찰·전환 결정**: Playwright 차단 확인(`probe_naver.py`) → **네이버 검색 오픈 API**로 전환
 - ✅ **배송비 처리 = 3안(빈칸+"확인필요")** 확정
-- ⏳ **API 키 발급 중**: 네이버 개발자센터 앱 등록(사용 API=검색, 환경=WEB, URL=`http://localhost`)
-- ⬜ **다음**: 레이어 2 `search_worker.py` — 오픈 API 호출 + 토큰 매칭 (`httpx` 설치, 키 환경변수 설정 후 착수)
-  - 정리 과제: `probe_naver.py` 삭제, `playwright`/`chromium` 제거 가능
+- ✅ **API 키 주입 환경 구성 완료**: `httpx`/`python-dotenv` 설치, `config.naver_api_headers()`/
+  `naver_credentials()` + 오픈 API 상수 추가, `.env` 자동 로드, `env.example`/`.gitignore` 정비.
+  사용자가 실제 키로 `.env` 생성 완료. (env 로드→헤더 생성→키 누락 에러 3항목 검증 통과)
+- ⬜ **다음**: 레이어 2 `search_worker.py` — `httpx`로 오픈 API 호출(`naver_api_headers()`,
+  `NAVER_SHOP_API_URL`, `sort=asc`) + `title` 정리 + 토큰 매칭으로 동일상품 선별, `Worker` 주입.
 - ⬜ 결과 저장(openpyxl) 및 오케스트레이터↔워커 통합(end-to-end) 미착수

@@ -17,7 +17,7 @@
 
 ### 1. Python 설치
 - [python.org](https://www.python.org/downloads/)에서 설치. 설치 시 **"Add Python to PATH" 체크** 필수.
-- 권장 버전: **Python 3.12** (3.14는 최신이라 레이어 2의 `playwright`/`anthropic` 휠 호환성 이슈 가능).
+- 권장 버전: **Python 3.12+** (개발은 3.14.5에서 진행 — `pandas`/`openpyxl`/`httpx` 정상 동작 확인).
 - 확인: `python --version`
 
 ### 2. 프로젝트 받기
@@ -35,15 +35,24 @@ python -m venv .venv
 
 > 참고(macOS/Linux): `python3 -m venv .venv` 후 `.venv/bin/python -m pip install -r requirements.txt`
 
-### 4. (레이어 2 착수 시에만) 브라우저 + API 키
+### 4. 네이버 검색 오픈 API 키 설정 (레이어 2)
+[네이버 개발자센터](https://developers.naver.com/apps)에서 앱을 등록(사용 API=**검색**,
+환경=WEB, 서비스 URL=`http://localhost`)하면 **Client ID / Client Secret**이 발급됩니다.
+
+키는 코드에 하드코딩하지 않고 환경변수(`NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`)로 주입합니다.
+가장 편한 방법은 프로젝트 루트에 `.env` 파일을 두는 것입니다 (git에 올라가지 않음):
+
 ```powershell
-# requirements.txt에서 playwright/anthropic 주석 해제 후 재설치한 뒤:
-.\.venv\Scripts\python.exe -m playwright install chromium
+Copy-Item env.example .env
+# .env 를 열어 발급받은 Client ID / Secret 값을 채웁니다.
 ```
-- Claude API 키는 환경변수로 주입 (코드에 하드코딩 금지):
-  ```powershell
-  $env:ANTHROPIC_API_KEY = "sk-ant-..."
-  ```
+
+> `.env`는 실행 시 `config.py`가 자동으로 읽어 환경변수로 로드합니다(python-dotenv).
+> `.env` 없이 매번 셸에서 직접 넣어도 됩니다:
+> ```powershell
+> $env:NAVER_CLIENT_ID = "..."
+> $env:NAVER_CLIENT_SECRET = "..."
+> ```
 
 ---
 
@@ -67,6 +76,7 @@ python -m venv .venv
 ## 현재 상태
 - ✅ 레이어 1 (오케스트레이터) 단계 1~4 구현·검증 완료
   - 단계 1 엑셀 읽기 · 단계 2 큐 생성 · 단계 3 배치 분배 · 단계 4 체크포인트
-- ⬜ 레이어 2 (`search_worker.py`: Playwright + Claude API) 미착수
+- ⬜ 레이어 2 (`search_worker.py`: 네이버 검색 오픈 API + 토큰 매칭) 미착수
+  - ✅ API 키 환경변수 주입 환경 구성 완료 (`config.naver_api_headers()`, `.env`/`env.example`)
 
 자세한 단계별 진행 상황은 [`plan/init.md`](plan/init.md)를 참조하세요.

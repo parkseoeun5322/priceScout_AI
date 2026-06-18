@@ -52,16 +52,4 @@
 
 > ⚠️ Playwright 접근은 네이버 봇 차단으로 폐기됨 (`probe_naver.py` 정찰 기록, `plan/init.md` 참조).
 
-## 현재 상태 (2026-06-16)
-- 환경: 프로젝트 루트 `.venv/` (Python 3.14.5). 실행은 `.\.venv\Scripts\python.exe ...`
-- 설치 완료: `pandas`, `openpyxl` (+ `playwright`/`chromium`은 설치했으나 봇 차단으로 폐기, 제거 가능)
-- **레이어 1(오케스트레이터) 단계 1~4 구현·검증 완료** (`config.py`, `orchestrator.py`)
-  - 단계 1 엑셀 읽기(`read_products`) · 단계 2 큐 생성(`chunk`)
-  - 단계 3 배치 분배(`distribute`: Semaphore 동시성 제한 + 랜덤 지연 + 예외 격리, 워커 주입형)
-  - 단계 4 체크포인트(`load/save_checkpoint`: 원자적 저장, 성공 row만 영속화 → 실패 재시도)
-  - 콘솔 한글 출력: `config.setup_utf8_output()`
-- **레이어 2 접근 전환**: Playwright 차단 확인(`probe_naver.py`) → **네이버 검색 오픈 API**로 결정.
-  배송비는 3안(빈칸+"확인필요") 확정.
-- 다음: API 키 발급 완료 후 레이어 2 `search_worker.py` 착수 (`httpx`로 오픈 API 호출 + 토큰 매칭, `Worker` 주입).
-  - 선행: `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET` 환경변수, `httpx` 설치. 정리: `probe_naver.py` 삭제.
-- 상세 진행상황은 `plan/init.md` 참조.
+> 상세 진행상황은 `plan/init.md` 참조.
