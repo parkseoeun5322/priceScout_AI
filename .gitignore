@@ -1,3 +1,5 @@
+.idea/
+
 # 가상환경 (각 PC에서 새로 생성 — requirements.txt로 재현)
 .venv/
 
