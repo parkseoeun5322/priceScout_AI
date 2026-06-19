@@ -8,8 +8,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 실행 중 생성되는 진행상태/임시 파일
+# 실행 중 생성되는 진행상태/임시 파일 및 결과물
 checkpoint/
+result/
 *.tmp
 
 # 환경변수(네이버 API 키 등) — 비밀값이므로 git 추적 제외 (env.example만 공유)

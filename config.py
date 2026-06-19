@@ -107,6 +107,10 @@ NAVER_SORT = "asc"
 ENV_NAVER_CLIENT_ID = "NAVER_CLIENT_ID"
 ENV_NAVER_CLIENT_SECRET = "NAVER_CLIENT_SECRET"
 
+# 토큰 매칭 임계값: 검색어 토큰 중 이 비율 이상이 title에 포함되어야 후보로 인정.
+# 0.5 = 절반 이상 일치. 낮추면 더 많이 잡히나 정확도 저하.
+MATCH_THRESHOLD = 0.5
+
 
 def naver_credentials() -> tuple[str, str]:
     """환경변수에서 네이버 오픈 API 키(Client ID/Secret)를 읽어 반환한다.

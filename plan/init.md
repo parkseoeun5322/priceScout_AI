@@ -67,7 +67,7 @@ src_shopping/
 - 손상된 JSON은 경고 후 처음부터 시작.
 - 검증: 최초실행/완료분 건너뜀/부분완료 재시작/실패 재시도/손상파일 복구 5항목 통과.
 
-### 레이어 2 — search_worker.py  (⬜ 미착수 / API 키 발급 대기)
+### 레이어 2 — search_worker.py  ✅ (구현·검증 완료)
 
 #### 폐기된 접근: Playwright (정찰 결과 차단 확인, 2026-06-16)
 `playwright`+`chromium` 설치 후 `probe_naver.py`로 실제 네이버 쇼핑 접근을 시험한 결과 **전부 차단**:
@@ -77,24 +77,28 @@ src_shopping/
 | Headed Chromium 홈→검색 | **로그인 페이지로 강제 리다이렉트** |
 | 실제 Chrome(`channel=chrome`) 딥링크 | **HTTP 405 + 이미지 CAPTCHA**(사람이 풀어야 함) |
 stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdriver` 제거, ko-KR/UA)을
-적용해도 동일. → Playwright 경로 폐기. (`probe_naver.py`는 정찰용 임시 파일, 정리 예정.)
+적용해도 동일. → Playwright 경로 폐기.
 
 #### 채택된 접근: 네이버 검색 오픈 API
-1. **API 호출**(`httpx` 권장, async): `GET https://openapi.naver.com/v1/search/shop.json`
-   - 헤더: `X-Naver-Client-Id`, `X-Naver-Client-Secret` (환경변수로 주입)
-   - 파라미터: `query`(=search_query), `display`(예: 30~100), `sort=asc`(낮은 가격순)
-   - 응답 `items[]`: `title`(상품명, `<b>`태그·HTML엔티티 정리 필요), `link`(상품 URL),
-     `lprice`(최저가), `mallName`, `productId`, `brand`, `maker`, `category1~4`
-2. **동일상품 정확도 매칭**(순수 Python 토큰 비교):
-   - 검색어(상품명+규격) 토큰이 `title`에 많이 포함된 후보를 선별,
-   - 그 중 `lprice` 최소(이미 `sort=asc`) 항목 채택. 후보 없으면 null + 사유.
-3. 결과 dict 반환 → 오케스트레이터(`distribute`)가 `Worker` 타입으로 주입받아 수집.
-   - 반환 예: `{lprice, title(정리본), link, mallName, status}` (배송비 미포함 → 빈칸/"확인필요")
+1. **API 호출** (`search_worker.py` — `clean_title`, `search_naver`) ✅
+   - `httpx.AsyncClient` (공유 클라이언트로 커넥션 풀 재사용)
+   - `GET https://openapi.naver.com/v1/search/shop.json`
+   - 헤더: `config.naver_api_headers()` (`X-Naver-Client-Id`/`X-Naver-Client-Secret`)
+   - 파라미터: `query`, `display=30`, `sort=asc`
+   - 응답 `items[]` 정규화: `<b>` 태그 제거, HTML 엔티티 복원, `lprice` → int
+2. **동일상품 토큰 매칭** (`tokenize`, `match_score`, `select_best`) ✅
+   - 검색어 소문자 토큰 → title 내 substring 매칭 비율 계산 (대소문자 무시)
+   - 임계값(`MATCH_THRESHOLD=0.5`) 이상 후보 중 첫 번째(=최저가) 채택
+   - 임계값 미달이나 API 결과 있으면 **저신뢰 채택(`low_match`)** — 빈칸보다 낫고 상태 칸에 명시
+   - API 결과 0건일 때만 `no_match` (빈칸)
+3. **Worker 주입** (`make_worker`) ✅
+   - 반환 status: `ok` / `low_match` / `no_match` / `error`(오케스트레이터가 격리)
 
-### 결과 저장 (openpyxl)
-- 새 워크북/시트 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비(="확인필요") · 합계 · 매칭상품명 · 상품URL · 쇼핑몰 · 상태`
-  - 배송비 칸은 비워두고 "확인필요" 표기, 합계는 배송비 미포함(추후 보강).
-- `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx` 로 저장 (디렉토리 없으면 생성).
+### 결과 저장 (openpyxl) ✅ (구현·검증 완료)
+- 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비 · 합계 · 매칭상품명 · 상품URL · 쇼핑몰 · 상태`
+  - 배송비 = "확인필요" 고정, 합계 = qty × lprice (배송비 미포함)
+  - 상품URL 하이퍼링크, 헤더 볼드+배경색, 열 너비 자동 조정
+- 저장: `result/{년도}/{월}월/{학교명}_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
 
 ## 사전 준비 / 의존성
 - **가상환경**: 프로젝트 루트에 `.venv/` 생성 완료 (Python 3.14.5). venv 자동 생성 `.gitignore`로 git 추적 제외됨.
@@ -124,16 +128,20 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - **매칭 정확도**: 토큰 매칭만으로 동일상품 식별이 약할 수 있음 → 품질 부족 시 Claude API 도입 검토.
 - API는 봇 차단이 없으므로 `MAX_CONCURRENT_BROWSERS`/지연 의미는 약해지나, 예의상·한도상 유지.
 
-## 현재 진행 상태 (2026-06-18 업데이트)
-- ✅ `.venv` 생성 + `pandas`/`openpyxl` 설치, `requirements.txt`/`README.md`/`.gitignore` 작성
+## 현재 진행 상태 (2026-06-19 업데이트)
+- ✅ `.venv` 생성 + 의존성 설치 (`pandas`/`openpyxl`/`httpx`/`python-dotenv`), 환경 정비
 - ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
-  - 단계 1 엑셀 읽기 / 단계 2 큐 생성 / 단계 3 배치 분배 / 단계 4 체크포인트
-  - 각 함수에 단계 구역(banner) 주석, `config.py` 설정도 단계 표기, `setup_utf8_output()` 한글 출력
-- ✅ **레이어 2 접근 방식 정찰·전환 결정**: Playwright 차단 확인(`probe_naver.py`) → **네이버 검색 오픈 API**로 전환
-- ✅ **배송비 처리 = 3안(빈칸+"확인필요")** 확정
-- ✅ **API 키 주입 환경 구성 완료**: `httpx`/`python-dotenv` 설치, `config.naver_api_headers()`/
-  `naver_credentials()` + 오픈 API 상수 추가, `.env` 자동 로드, `env.example`/`.gitignore` 정비.
-  사용자가 실제 키로 `.env` 생성 완료. (env 로드→헤더 생성→키 누락 에러 3항목 검증 통과)
-- ⬜ **다음**: 레이어 2 `search_worker.py` — `httpx`로 오픈 API 호출(`naver_api_headers()`,
-  `NAVER_SHOP_API_URL`, `sort=asc`) + `title` 정리 + 토큰 매칭으로 동일상품 선별, `Worker` 주입.
-- ⬜ 결과 저장(openpyxl) 및 오케스트레이터↔워커 통합(end-to-end) 미착수
+- ✅ **레이어 2 구현·검증 완료** (`search_worker.py`)
+  - 단계 1: API 호출 (`clean_title`, `search_naver`) — title 정리, lprice 정규화
+  - 단계 2: 토큰 매칭 (`tokenize`, `match_score`, `select_best`, `make_worker`)
+    - 임계값 이상 → ok / 미달이나 결과 있음 → low_match(저신뢰 채택) / 결과 없음 → no_match
+  - 결과 저장: `save_results()` — 헤더·하이퍼링크·열 너비 자동 조정, 배송비="확인필요"
+- ✅ **전체 파이프라인 통합** (`run.py`) — 레이어 1+2 end-to-end 연결, 공유 클라이언트
+- ✅ **107건 전량 실행 완료** (방림초등학교 2026-06-19)
+  - ok 76건 / low_match 21건(저신뢰, 검토 필요) / no_match 10건 / error 0건
+  - 출력: `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
+- ⬜ **추후 보강**:
+  1. **API 결과 없을 경우 보강** — no_match(API 0건) 항목에 대한 대안 검색 전략 마련
+     (예: 검색어 단순화, 상품명 일부만 사용, Claude API 매칭 도입 검토)
+  2. **엑셀 마지막 행에 요약 추가** — 미매칭(no_match+low_match) 건수 및 H열(합계) 총합 행 삽입
+  3. **배송비 실제 반영** — 현재 "확인필요" 고정 → 실제 배송비 수집 방법 검토 후 합계 갱신
