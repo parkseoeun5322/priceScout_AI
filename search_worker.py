@@ -184,6 +184,18 @@ def select_best(
     )
 
 
+_PARENS_RE = re.compile(r"\s*\([^)]*\)")
+
+
+def strip_parens(text: str) -> str:
+    """상품명에서 소괄호 및 그 안의 내용을 제거한다.
+
+    예: "클레이 도구, 찍기틀 세트(2종 택1/롤러/모양틀/KC인증)" → "클레이 도구, 찍기틀 세트"
+    괄호가 없으면 원문 그대로 반환.
+    """
+    return _PARENS_RE.sub("", text).strip()
+
+
 def make_worker(client: httpx.AsyncClient | None = None) -> Worker:
     """네이버 오픈 API 호출(단계 1) + 토큰 매칭(단계 2)을 조합한 Worker를 반환한다.
 
@@ -195,10 +207,33 @@ def make_worker(client: httpx.AsyncClient | None = None) -> Worker:
       - 저신뢰 채택: status='low_match', lprice(int), title, link, mallName, match_reason("저신뢰 채택: ...")
       - API 결과 없음: status='no_match', lprice=None, title=None, link=None, match_reason
       - 예외 발생:   오케스트레이터 _process_one이 status='error'로 격리.
+
+    폴백 순서 (API 0건일 때만 다음 단계로):
+      1) "상품명 규격" → 2) "상품명" (규격 있을 때) → 3) 괄호 제거 상품명
+    재검색으로 채택된 결과는 match_reason 앞에 "[상품명 재검색]" 또는 "[괄호제거 재검색]" 이 붙는다.
     """
     async def worker(product: dict) -> dict:
         query = product["search_query"]
         items = await search_naver(query, client=client)
+        fallback_label: str | None = None
+
+        # 폴백 1: "상품명 규격" 0건 + 규격 있음 → "상품명"만으로 재검색
+        if not items and product.get("spec"):
+            name_query = product["name"]
+            items = await search_naver(name_query, client=client)
+            if items:
+                fallback_label = "상품명 재검색"
+                query = name_query
+
+        # 폴백 2: 여전히 0건 + 상품명에 괄호 있음 → 괄호 제거 후 재검색
+        if not items:
+            name_no_parens = strip_parens(product["name"])
+            if name_no_parens and name_no_parens != product["name"]:
+                items = await search_naver(name_no_parens, client=client)
+                if items:
+                    fallback_label = "괄호제거 재검색"
+                    query = name_no_parens
+
         best, reason = select_best(query, items)
 
         if best is None:
@@ -212,6 +247,8 @@ def make_worker(client: httpx.AsyncClient | None = None) -> Worker:
             }
 
         is_low = reason.startswith("저신뢰 채택:")
+        if fallback_label:
+            reason = f"[{fallback_label}] {reason}"
         return {
             "status": "low_match" if is_low else "ok",
             "match_reason": reason,

@@ -93,6 +93,11 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
    - API 결과 0건일 때만 `no_match` (빈칸)
 3. **Worker 주입** (`make_worker`) ✅
    - 반환 status: `ok` / `low_match` / `no_match` / `error`(오케스트레이터가 격리)
+   - **3단계 폴백** — 각 단계에서 API 0건일 때만 다음 단계로 진행:
+     1. `"상품명 규격"` 검색 (기본)
+     2. `"상품명"` 만 검색 (규격 있을 때)
+     3. 괄호 제거 상품명 검색 — `strip_parens("클레이 도구(2종 택1)")` → `"클레이 도구"`
+   - 폴백으로 채택된 결과는 상태 칸에 `[상품명 재검색]` / `[괄호제거 재검색]` 표시
 
 ### 결과 저장 (openpyxl) ✅ (구현·검증 완료)
 - 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비 · 합계 · 매칭상품명 · 상품URL · 쇼핑몰 · 상태`
@@ -128,7 +133,7 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - **매칭 정확도**: 토큰 매칭만으로 동일상품 식별이 약할 수 있음 → 품질 부족 시 Claude API 도입 검토.
 - API는 봇 차단이 없으므로 `MAX_CONCURRENT_BROWSERS`/지연 의미는 약해지나, 예의상·한도상 유지.
 
-## 현재 진행 상태 (2026-06-19 업데이트)
+## 현재 진행 상태 (2026-06-23 업데이트)
 - ✅ `.venv` 생성 + 의존성 설치 (`pandas`/`openpyxl`/`httpx`/`python-dotenv`), 환경 정비
 - ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
 - ✅ **레이어 2 구현·검증 완료** (`search_worker.py`)
@@ -137,11 +142,14 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
     - 임계값 이상 → ok / 미달이나 결과 있음 → low_match(저신뢰 채택) / 결과 없음 → no_match
   - 결과 저장: `save_results()` — 헤더·하이퍼링크·열 너비 자동 조정, 배송비="확인필요"
 - ✅ **전체 파이프라인 통합** (`run.py`) — 레이어 1+2 end-to-end 연결, 공유 클라이언트
-- ✅ **107건 전량 실행 완료** (방림초등학교 2026-06-19)
-  - ok 76건 / low_match 21건(저신뢰, 검토 필요) / no_match 10건 / error 0건
+- ✅ **no_match 폴백 검색 구현** (`search_worker.py` — `strip_parens`, `make_worker` 3단계 폴백, 2026-06-23)
+  - 폴백 1: "상품명 규격" → 0건 시 "상품명"만 재검색
+  - 폴백 2: 여전히 0건 시 상품명 괄호 제거(`strip_parens`) 후 재검색
+- ✅ **107건 전량 실행 완료** (방림초등학교 2026-06-23, 폴백 적용 후 최신)
+  - ok 84건 / low_match 22건(저신뢰, 검토 필요) / no_match 1건 / error 0건
+  - (이전 2026-06-19: ok 76 / low_match 21 / no_match 10 → 폴백으로 9건 해소)
   - 출력: `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
 - ⬜ **추후 보강**:
-  1. **API 결과 없을 경우 보강** — no_match(API 0건) 항목에 대한 대안 검색 전략 마련
-     (예: 검색어 단순화, 상품명 일부만 사용, Claude API 매칭 도입 검토)
+  1. ~~**API 결과 없을 경우 보강**~~ ✅ 3단계 폴백으로 구현 완료 (잔여 1건은 네이버 미등록 추정)
   2. **엑셀 마지막 행에 요약 추가** — 미매칭(no_match+low_match) 건수 및 H열(합계) 총합 행 삽입
   3. **배송비 실제 반영** — 현재 "확인필요" 고정 → 실제 배송비 수집 방법 검토 후 합계 갱신
