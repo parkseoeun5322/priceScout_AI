@@ -276,6 +276,10 @@ _HEADERS = [
 
 # 헤더 배경색 (연한 파란색)
 _HEADER_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+# 요약 행 배경색 (연한 노란색)
+_SUMMARY_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+# 미매칭 행 배경색 (연한 회색)
+_NO_MATCH_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
 
 
 def _status_label(result: dict) -> str:
@@ -339,6 +343,11 @@ def save_results(results: list[dict], path: Path) -> None:
         ]
         ws.append(row_values)
 
+        # 미매칭 행 배경색 적용
+        if r.get("status") == "no_match":
+            for cell in ws[ws.max_row]:
+                cell.fill = _NO_MATCH_FILL
+
         # 상품URL 셀에 하이퍼링크 적용
         link = r.get("link") or ""
         if link:
@@ -355,6 +364,32 @@ def save_results(results: list[dict], path: Path) -> None:
                 val = str(cell.value) if cell.value is not None else ""
                 max_len = max(max_len, len(val))
         ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+    # 요약 행 추가
+    ok_cnt  = sum(1 for r in results if r.get("status") == "ok")
+    low_cnt = sum(1 for r in results if r.get("status") == "low_match")
+    no_cnt  = sum(1 for r in results if r.get("status") == "no_match")
+    err_cnt = sum(1 for r in results if r.get("status") == "error")
+    h_total = sum(
+        r["qty"] * r["lprice"]
+        for r in results
+        if isinstance(r.get("qty"), int) and isinstance(r.get("lprice"), int)
+    )
+    f_total = sum(r["lprice"] for r in results if isinstance(r.get("lprice"), int))
+
+    summary_row = [""] * len(_HEADERS)
+    summary_row[_HEADERS.index("순번")]       = "요약"
+    summary_row[_HEADERS.index("최저가(단가)")] = f_total or ""
+    summary_row[_HEADERS.index("합계")]       = h_total or ""
+    summary_row[_HEADERS.index("배송비")]     = "배송비 미포함"
+    summary_row[_HEADERS.index("상태")]   = (
+        f"ok {ok_cnt}건 / 저신뢰 {low_cnt}건 / 미매칭 {no_cnt}건 / 오류 {err_cnt}건"
+        f"  (확인 필요: {low_cnt + no_cnt}건)"
+    )
+    ws.append(summary_row)
+    for cell in ws[ws.max_row]:
+        cell.fill = _SUMMARY_FILL
+        cell.font = Font(bold=True)
 
     wb.save(path)
     print(f"[save_results] {len(results)}건 저장 완료 → {path}")

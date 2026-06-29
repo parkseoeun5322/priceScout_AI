@@ -103,6 +103,8 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - 헤더: `순번 · 상품명 · 규격 · 수량 · 검색어 · 최저가(단가) · 배송비 · 합계 · 매칭상품명 · 상품URL · 쇼핑몰 · 상태`
   - 배송비 = "확인필요" 고정, 합계 = qty × lprice (배송비 미포함)
   - 상품URL 하이퍼링크, 헤더 볼드+배경색, 열 너비 자동 조정
+  - **no_match 행**: 연한 회색(`D9D9D9`) 배경으로 시각적 구분
+  - **요약 행(맨 마지막, 노란 배경 `FFF2CC`)**: F열 최저가 합계 · H열 합계 총합 · L열 상태 건수 요약
 - 저장: `result/{년도}/{월}월/{학교명}_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
 
 ## 사전 준비 / 의존성
@@ -133,7 +135,7 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
 - **매칭 정확도**: 토큰 매칭만으로 동일상품 식별이 약할 수 있음 → 품질 부족 시 Claude API 도입 검토.
 - API는 봇 차단이 없으므로 `MAX_CONCURRENT_BROWSERS`/지연 의미는 약해지나, 예의상·한도상 유지.
 
-## 현재 진행 상태 (2026-06-23 업데이트)
+## 현재 진행 상태 (2026-06-29 업데이트)
 - ✅ `.venv` 생성 + 의존성 설치 (`pandas`/`openpyxl`/`httpx`/`python-dotenv`), 환경 정비
 - ✅ **레이어 1 전 단계(1~4) 구현·검증 완료** (`config.py`, `orchestrator.py`)
 - ✅ **레이어 2 구현·검증 완료** (`search_worker.py`)
@@ -149,7 +151,10 @@ stealth 옵션(`--disable-blink-features=AutomationControlled`, `navigator.webdr
   - ok 84건 / low_match 22건(저신뢰, 검토 필요) / no_match 1건 / error 0건
   - (이전 2026-06-19: ok 76 / low_match 21 / no_match 10 → 폴백으로 9건 해소)
   - 출력: `result/2026/06월/방림초등학교_교재교구_및_놀이활동_물품_구입_최저가목록.xlsx`
+- ✅ **엑셀 출력 보강** (`save_results`, 2026-06-29)
+  - no_match 행 연한 회색 배경 적용 (`_NO_MATCH_FILL`)
+  - 맨 마지막에 요약 행 삽입 (노란 배경): F열 최저가 합계, H열 합계 총합, L열 상태 건수
 - ⬜ **추후 보강**:
   1. ~~**API 결과 없을 경우 보강**~~ ✅ 3단계 폴백으로 구현 완료 (잔여 1건은 네이버 미등록 추정)
-  2. **엑셀 마지막 행에 요약 추가** — 미매칭(no_match+low_match) 건수 및 H열(합계) 총합 행 삽입
+  2. ~~**엑셀 마지막 행에 요약 추가**~~ ✅ 요약 행 + no_match 회색 배경 구현 완료
   3. **배송비 실제 반영** — 현재 "확인필요" 고정 → 실제 배송비 수집 방법 검토 후 합계 갱신
